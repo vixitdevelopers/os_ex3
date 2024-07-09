@@ -83,23 +83,18 @@ class JobHandler
     return static_cast<stage_t>(atomic_state->load () >> STAGE_BITS_SHIFT);
   }
 
-  void updateState (stage_t prev_stage, stage_t new_stage, int total)
-  {
-    if (pthread_mutex_lock (&mutex) != 0)
-    {
-      printf ("failed to lock a update_stage_mutex");
+  void updateState(stage_t prev_stage, stage_t new_stage, int total) {
+    if (pthread_mutex_lock(&state_mutex) != 0) {
+      printf("failed to lock a update_stage_mutex");
     }
 
-    if (getJobStateFromAtomic () == prev_stage)
-    {
-      uint64_t map_init_state = (uint64_t) total << TOTAL_KEYS_BITS_SHIFT
-                                | (uint64_t) new_stage << STAGE_BITS_SHIFT;
+    if (getJobStateFromAtomic() == prev_stage) {
+      uint64_t map_init_state = (uint64_t) total << TOTAL_KEYS_BITS_SHIFT | (uint64_t) new_stage << STAGE_BITS_SHIFT;
       *atomic_state = map_init_state;
     }
 
-    if (pthread_mutex_unlock (&state_mutex) != 0)
-    {
-      printf ("failed to unlock a update_stage_mutex");
+    if (pthread_mutex_unlock(&state_mutex) != 0) {
+      printf("failed to unlock a update_stage_mutex");
     }
   }
 
