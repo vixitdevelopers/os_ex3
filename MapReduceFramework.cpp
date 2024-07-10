@@ -16,7 +16,7 @@ void emit2 (K2* key, V2* value, void* context){
 }
 
 void emit3 (K3* key, V3* value, void* context){
-  JobHandler* job = (JobHandler*) context;
+  auto* job = (JobHandler*) context;
 
   if (pthread_mutex_lock(&(job->mutex_emit)) != 0){
     fprintf(stdout, "system error: error\n");
@@ -53,7 +53,6 @@ void map_stage(JobHandler *job)
   }
   while (true)
   {
-
     uint64_t i = (*(job->atomic_counter))++;
     if (i >= ((job->input_vec).size ()))
     {
@@ -73,22 +72,22 @@ void map_stage(JobHandler *job)
 
 void shuffle_stage(JobHandler *job)
 {
-    size_t num_of_pairs = 0;
-    for (uint64_t i = 0; i < job->num_of_threads; i++){
-        num_of_pairs += (((job->emit2_pre)[i]).size ());
-    }
-    job->updateState(MAP_STAGE, SHUFFLE_STAGE,
+  size_t num_of_pairs = 0;
+  for (uint64_t i = 0; i < job->num_of_threads; i++){
+    num_of_pairs += (((job->emit2_pre)[i]).size ());
+  }
+  job->updateState(MAP_STAGE, SHUFFLE_STAGE,
                    num_of_pairs);
-    for (uint64_t i = 0; i < job->num_of_threads; i++)
+  for (uint64_t i = 0; i < job->num_of_threads; i++)
+  {
     {
+      for (uint64_t j = 0; j < (((job->emit2_pre)[i]).size ()); j++)
       {
-        for (uint64_t j = 0; j < (((job->emit2_pre)[i]).size ()); j++)
-        {
-          (job->emit2_post).emplace ((((job->emit2_pre)[i])[j]));
-          (*(job->atomic_state))++;
-        }
+        (job->emit2_post).emplace ((((job->emit2_pre)[i])[j]));
+        (*(job->atomic_state))++;
       }
     }
+  }
 }
 
 void lock_mutex(pthread_mutex_t *mutex) {
@@ -134,7 +133,6 @@ void reduce_stage(JobHandler *job) {
       unlock_mutex(&(job->mutex_reduce));
       break;
     }
-
     uint64_t count = 0;
     IntermediateVec new_vec = process_batch(job, &count);
 
@@ -151,9 +149,9 @@ void* thread_entry_point(void* jobHand)
   job->updateState(UNDEFINED_STAGE, MAP_STAGE, (int) job->input_vec.size());
 
   map_stage(job);
+  job->barrier2->barrier();
   //shuffle
   if(pthread_equal ( pthread_self(), (job->threads)[0])){
-
     shuffle_stage (job);
   }
   job->barrier2->barrier();
@@ -164,9 +162,9 @@ void* thread_entry_point(void* jobHand)
   return nullptr;
 }
 
-JobHandle start_map_reduce_job(const MapReduceClient& client,
-                               const InputVec& inputVec, OutputVec& outputVec,
-                               int multiThreadLevel){
+JobHandle startMapReduceJob(const MapReduceClient& client,
+                            const InputVec& inputVec, OutputVec& outputVec,
+                            int multiThreadLevel){
   JobHandler* job = new JobHandler(client, inputVec, outputVec, multiThreadLevel);
   for (int i = 0; i < multiThreadLevel; ++i) {
     if(pthread_create ((job->threads) + i, NULL, thread_entry_point, job) != 0){
@@ -177,7 +175,7 @@ JobHandle start_map_reduce_job(const MapReduceClient& client,
   return job;
 }
 
-void wait_for_job(JobHandle job){
+void waitForJob(JobHandle job){
   JobHandler* j = (JobHandler*)job;
   if(j->done){
     return;
@@ -201,7 +199,7 @@ void wait_for_job(JobHandle job){
 
 
 }
-void get_job_state(JobHandle job, JobState* state){
+void getJobState(JobHandle job, JobState* state){
   JobHandler* j = (JobHandler*)job;
   uint64_t atomic_full = *(j->atomic_state);
   uint64_t atomic_s = atomic_full;
@@ -216,8 +214,8 @@ void get_job_state(JobHandle job, JobState* state){
   state->stage = (stage_t)atomic_s;
 }
 
-void close_job_handle(JobHandle job){
-  wait_for_job (job);
-  JobHandler *job_to_delete = (JobHandler*)job;
-  delete job_to_delete;
+void closeJobHandle(JobHandle job){
+  waitForJob (job);
+  JobHandler *j = (JobHandler*)job;
+  delete j;
 }

@@ -1,6 +1,3 @@
-//
-// Created by dani on 7/9/24.
-//
 
 #ifndef _JOBHANDLER_H_
 #define _JOBHANDLER_H_
@@ -66,8 +63,8 @@ class JobHandler
               const InputVec &inputVec, OutputVec &outputVec,
               int multiThreadLevel)
       : client (client), input_vec (inputVec), output_vec
-      (outputVec), mutex_reduce (PTHREAD_MUTEX_INITIALIZER), mutex_emit (PTHREAD_MUTEX_INITIALIZER), mutex_wait (PTHREAD_MUTEX_INITIALIZER),
-        mutex_state (PTHREAD_MUTEX_INITIALIZER), n_of_thread (multiThreadLevel)
+      (outputVec), n_of_thread (multiThreadLevel), mutex_wait (PTHREAD_MUTEX_INITIALIZER), mutex_state (PTHREAD_MUTEX_INITIALIZER),
+        mutex_reduce (PTHREAD_MUTEX_INITIALIZER), mutex_emit (PTHREAD_MUTEX_INITIALIZER)
   {
     threads = new pthread_t[multiThreadLevel];
     emit2_pre = new IntermediateVec[multiThreadLevel];
