@@ -44,21 +44,21 @@ class JobHandler
 {
  public:
 
+  Barrier *barrier;
+  Barrier *barrier2;
   const MapReduceClient &client;
   const InputVec &input_vec;
   OutputVec &output_vec;
-  pthread_mutex_t mutex;
-  pthread_mutex_t emit_mutex;
-  pthread_mutex_t wait_mutex;
-  pthread_mutex_t state_mutex;
-  Barrier *barrier;
-  Barrier *barrier2;
   pthread_t *threads;
   std::atomic<uint64_t> *atomic_counter;
   std::atomic<uint64_t> *atomic_state;
   int n_of_thread;
   IntermediateVec *emit2_pre;
   shuffle_type emit2_post;
+  pthread_mutex_t mutex_wait;
+  pthread_mutex_t mutex_state;
+  pthread_mutex_t mutex_reduce;
+  pthread_mutex_t mutex_emit;
 
   int num_of_threads;
   bool done;
@@ -66,8 +66,8 @@ class JobHandler
               const InputVec &inputVec, OutputVec &outputVec,
               int multiThreadLevel)
       : client (client), input_vec (inputVec), output_vec
-      (outputVec), mutex (PTHREAD_MUTEX_INITIALIZER), emit_mutex (PTHREAD_MUTEX_INITIALIZER), wait_mutex (PTHREAD_MUTEX_INITIALIZER),
-        state_mutex (PTHREAD_MUTEX_INITIALIZER), n_of_thread (multiThreadLevel)
+      (outputVec), mutex_reduce (PTHREAD_MUTEX_INITIALIZER), mutex_emit (PTHREAD_MUTEX_INITIALIZER), mutex_wait (PTHREAD_MUTEX_INITIALIZER),
+        mutex_state (PTHREAD_MUTEX_INITIALIZER), n_of_thread (multiThreadLevel)
   {
     threads = new pthread_t[multiThreadLevel];
     emit2_pre = new IntermediateVec[multiThreadLevel];
@@ -89,7 +89,7 @@ class JobHandler
 
   void updateState (stage_t prev_stage, stage_t new_stage, size_t total)
   {
-    if (pthread_mutex_lock (&state_mutex) != 0)
+    if (pthread_mutex_lock (&mutex_state) != 0)
     {
       printf ("failed to lock a update_stage_mutex");
     }
@@ -101,7 +101,7 @@ class JobHandler
       *atomic_state = map_init_state;
     }
 
-    if (pthread_mutex_unlock (&state_mutex) != 0)
+    if (pthread_mutex_unlock (&mutex_state) != 0)
     {
       printf ("failed to unlock a update_stage_mutex");
     }
@@ -115,10 +115,10 @@ class JobHandler
     delete barrier;
     delete barrier2;
     delete atomic_counter;
-    if (pthread_mutex_destroy (&mutex) != 0
-        || pthread_mutex_destroy (&emit_mutex)
-           != 0 || pthread_mutex_destroy (&wait_mutex) != 0
-        || pthread_mutex_destroy (&state_mutex) != 0)
+    if (pthread_mutex_destroy (&mutex_reduce) != 0
+        || pthread_mutex_destroy (&mutex_emit)
+           != 0 || pthread_mutex_destroy (&mutex_wait) != 0
+        || pthread_mutex_destroy (&mutex_state) != 0)
     {
       fprintf (stdout, "system error: error\n");
       exit (1);

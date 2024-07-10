@@ -10,7 +10,7 @@ struct ThreadContext {
 };
 
 
-void* foo(void* arg)
+void* thread_entry_point(void* arg)
 {
 	ThreadContext* tc = (ThreadContext*) arg;
 	printf("Before barriers: %d\n", tc->threadID);

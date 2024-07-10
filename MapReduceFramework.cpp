@@ -18,13 +18,13 @@ void emit2 (K2* key, V2* value, void* context){
 void emit3 (K3* key, V3* value, void* context){
   JobHandler* job = (JobHandler*) context;
 
-  if (pthread_mutex_lock(&(job->emit_mutex)) != 0){
+  if (pthread_mutex_lock(&(job->mutex_emit)) != 0){
     fprintf(stdout, "system error: error\n");
     exit(1);
   }
   OutputPair out = OutputPair ({key,value});
   (job->output_vec).push_back(out);
-  if (pthread_mutex_unlock (&(job->emit_mutex)) != 0)
+  if (pthread_mutex_unlock (&(job->mutex_emit)) != 0)
   {
     fprintf (stdout, "system error: error\n");
     exit (1);
@@ -128,30 +128,26 @@ IntermediateVec process_batch(JobHandler *job, uint64_t *count) {
 
 void reduce_stage(JobHandler *job) {
   while (true) {
-    lock_mutex(&(job->mutex));
+    lock_mutex(&(job->mutex_reduce));
 
     if (is_queue_empty(job)) {
-      unlock_mutex(&(job->mutex));
+      unlock_mutex(&(job->mutex_reduce));
       break;
     }
 
     uint64_t count = 0;
     IntermediateVec new_vec = process_batch(job, &count);
 
-    unlock_mutex(&(job->mutex));
+    unlock_mutex(&(job->mutex_reduce));
 
     (job->client).reduce(&new_vec, job);
     (*(job->atomic_state)) += count;
   }
 }
 
-
-
-
-
-void* foo(void* arg)
+void* thread_entry_point(void* jobHand)
 {
-  auto* job = (JobHandler*) arg;
+  auto* job = (JobHandler*) jobHand;
   job->updateState(UNDEFINED_STAGE, MAP_STAGE, (int) job->input_vec.size());
 
   map_stage(job);
@@ -168,12 +164,12 @@ void* foo(void* arg)
   return nullptr;
 }
 
-JobHandle startMapReduceJob(const MapReduceClient& client,
-                            const InputVec& inputVec, OutputVec& outputVec,
-                            int multiThreadLevel){
+JobHandle start_map_reduce_job(const MapReduceClient& client,
+                               const InputVec& inputVec, OutputVec& outputVec,
+                               int multiThreadLevel){
   JobHandler* job = new JobHandler(client, inputVec, outputVec, multiThreadLevel);
   for (int i = 0; i < multiThreadLevel; ++i) {
-    if(pthread_create((job->threads) + i, NULL, foo, job)!=0){
+    if(pthread_create ((job->threads) + i, NULL, thread_entry_point, job) != 0){
       fprintf (stdout, "system error: error\n");
       exit (1);
     }
@@ -181,15 +177,12 @@ JobHandle startMapReduceJob(const MapReduceClient& client,
   return job;
 }
 
-
-
-
-void waitForJob(JobHandle job){
+void wait_for_job(JobHandle job){
   JobHandler* j = (JobHandler*)job;
   if(j->done){
     return;
   }
-  if (pthread_mutex_lock(&(j->wait_mutex)) != 0){
+  if (pthread_mutex_lock(&(j->mutex_wait)) != 0){
     fprintf(stdout, "system error: error\n");
     exit(1);
   }
@@ -200,7 +193,7 @@ void waitForJob(JobHandle job){
       exit (1);
     }
   }
-  if (pthread_mutex_unlock (&(j->wait_mutex)) != 0)
+  if (pthread_mutex_unlock (&(j->mutex_wait)) != 0)
   {
     fprintf (stdout, "system error: error\n");
     exit (1);
@@ -208,23 +201,23 @@ void waitForJob(JobHandle job){
 
 
 }
-void getJobState(JobHandle job, JobState* state){
+void get_job_state(JobHandle job, JobState* state){
   JobHandler* j = (JobHandler*)job;
-  uint64_t sdc = *(j->atomic_state);
-  uint64_t s = sdc;
-  uint64_t d = sdc;
-  uint64_t c = sdc;
-  s=s>>62;
-  d=d<<2;
-  d=d>>33;
-  c=c<<33;
-  c=c>>33;
-  state->percentage = ((float)c)/((float)d)*100;
-  state->stage = (stage_t)s;
+  uint64_t atomic_full = *(j->atomic_state);
+  uint64_t atomic_s = atomic_full;
+  uint64_t atomic_d = atomic_full;
+  uint64_t atomic_c = atomic_full;
+  atomic_s=atomic_s >> 62;
+  atomic_d=atomic_d << 2;
+  atomic_d=atomic_d >> 33;
+  atomic_c=atomic_c << 33;
+  atomic_c=atomic_c >> 33;
+  state->percentage = ((float)atomic_c) / ((float)atomic_d) * 100;
+  state->stage = (stage_t)atomic_s;
 }
 
-void closeJobHandle(JobHandle job){
-  waitForJob(job);
-  JobHandler *j = (JobHandler*)job;
-  delete j;
+void close_job_handle(JobHandle job){
+  wait_for_job (job);
+  JobHandler *job_to_delete = (JobHandler*)job;
+  delete job_to_delete;
 }
