@@ -35,8 +35,9 @@ struct mysort
       return (*(lhs.first) < *(rhs.first));
     }
 } mysort;
+typedef std::deque<std::pair<K2 *, V2 *>> shuffle_pair;
 
-typedef std::priority_queue<IntermediatePair, std::deque<std::pair<K2 *, V2 *>>, mycomparison>
+typedef std::priority_queue<IntermediatePair, shuffle_pair, mycomparison>
     shuffle_type;
 
 class JobHandler
@@ -44,9 +45,8 @@ class JobHandler
  public:
 
   const MapReduceClient &client;
-  const InputVec &inputVec;
-  OutputVec &outputVec;
-  int multiThreadLevel;
+  const InputVec &input_vec;
+  OutputVec &output_vec;
   pthread_mutex_t mutex;
   pthread_mutex_t emit_mutex;
   pthread_mutex_t wait_mutex;
@@ -56,8 +56,7 @@ class JobHandler
   pthread_t *threads;
   std::atomic<uint64_t> *atomic_counter;
   std::atomic<uint64_t> *atomic_state;
-  std::atomic<uint64_t> *atomic_num_of_inter;
-
+  int n_of_thread;
   IntermediateVec *emit2_pre;
   shuffle_type emit2_post;
 
@@ -66,17 +65,16 @@ class JobHandler
   JobHandler (const MapReduceClient &client,
               const InputVec &inputVec, OutputVec &outputVec,
               int multiThreadLevel)
-      : client (client), inputVec (inputVec), outputVec
-      (outputVec), multiThreadLevel (multiThreadLevel), mutex (PTHREAD_MUTEX_INITIALIZER), emit_mutex (PTHREAD_MUTEX_INITIALIZER),
-        wait_mutex (PTHREAD_MUTEX_INITIALIZER), state_mutex (PTHREAD_MUTEX_INITIALIZER)
+      : client (client), input_vec (inputVec), output_vec
+      (outputVec), mutex (PTHREAD_MUTEX_INITIALIZER), emit_mutex (PTHREAD_MUTEX_INITIALIZER), wait_mutex (PTHREAD_MUTEX_INITIALIZER),
+        state_mutex (PTHREAD_MUTEX_INITIALIZER), n_of_thread (multiThreadLevel)
   {
     threads = new pthread_t[multiThreadLevel];
     emit2_pre = new IntermediateVec[multiThreadLevel];
     atomic_counter = new std::atomic<uint64_t> (0);
     num_of_threads = multiThreadLevel;
-    atomic_num_of_inter = new std::atomic<uint64_t> (0);
-    uint64_t init_value = (uint64_t) inputVec.size() <<
-                                                     TOTAL_KEYS_BITS_SHIFT |
+    uint64_t init_value = (uint64_t) inputVec.size () <<
+                                                      TOTAL_KEYS_BITS_SHIFT |
                           (uint64_t) UNDEFINED_STAGE << STAGE_BITS_SHIFT;
     atomic_state = new std::atomic<uint64_t> (init_value);
     barrier = new Barrier (multiThreadLevel);
@@ -89,18 +87,23 @@ class JobHandler
     return static_cast<stage_t>(atomic_state->load () >> STAGE_BITS_SHIFT);
   }
 
-  void updateState(stage_t prev_stage, stage_t new_stage, size_t total) {
-    if (pthread_mutex_lock(&state_mutex) != 0) {
-      printf("failed to lock a update_stage_mutex");
+  void updateState (stage_t prev_stage, stage_t new_stage, size_t total)
+  {
+    if (pthread_mutex_lock (&state_mutex) != 0)
+    {
+      printf ("failed to lock a update_stage_mutex");
     }
 
-    if (getJobStateFromAtomic() == prev_stage) {
-      uint64_t map_init_state = (uint64_t) total << TOTAL_KEYS_BITS_SHIFT | (uint64_t) new_stage << STAGE_BITS_SHIFT;
+    if (getJobStateFromAtomic () == prev_stage)
+    {
+      uint64_t map_init_state = (uint64_t) total << TOTAL_KEYS_BITS_SHIFT
+                                | (uint64_t) new_stage << STAGE_BITS_SHIFT;
       *atomic_state = map_init_state;
     }
 
-    if (pthread_mutex_unlock(&state_mutex) != 0) {
-      printf("failed to unlock a update_stage_mutex");
+    if (pthread_mutex_unlock (&state_mutex) != 0)
+    {
+      printf ("failed to unlock a update_stage_mutex");
     }
   }
 

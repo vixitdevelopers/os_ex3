@@ -23,7 +23,7 @@ void emit3 (K3* key, V3* value, void* context){
     exit(1);
   }
   OutputPair out = OutputPair ({key,value});
-  (job->outputVec).push_back(out);
+  (job->output_vec).push_back(out);
   if (pthread_mutex_unlock (&(job->emit_mutex)) != 0)
   {
     fprintf (stdout, "system error: error\n");
@@ -33,7 +33,7 @@ void emit3 (K3* key, V3* value, void* context){
 
 size_t find_thread_index(JobHandler * job){
 
-  for (size_t i = 0; i < (size_t) job->multiThreadLevel; i++)
+  for (size_t i = 0; i < (size_t) job->n_of_thread; i++)
   {
     if (pthread_equal (pthread_self (), (job->threads)[i]))
     {
@@ -55,12 +55,12 @@ void map_stage(JobHandler *job)
   {
 
     uint64_t i = (*(job->atomic_counter))++;
-    if (i >= ((job->inputVec).size ()))
+    if (i >= ((job->input_vec).size ()))
     {
       job->barrier->barrier ();
       break;
     }
-    job->client.map (((job->inputVec).at (i)).first, ((job->inputVec).at (i)).second, (
+    job->client.map (((job->input_vec).at (i)).first, ((job->input_vec).at (i)).second, (
         (job->emit2_pre) + thread_index));
 
     (*(job->atomic_state))++;
@@ -152,7 +152,7 @@ void reduce_stage(JobHandler *job) {
 void* foo(void* arg)
 {
   auto* job = (JobHandler*) arg;
-  job->updateState(UNDEFINED_STAGE, MAP_STAGE, (int) job->inputVec.size());
+  job->updateState(UNDEFINED_STAGE, MAP_STAGE, (int) job->input_vec.size());
 
   map_stage(job);
   //shuffle
@@ -194,7 +194,7 @@ void waitForJob(JobHandle job){
     exit(1);
   }
   j->done= true;
-  for(int i = 0; i<j->multiThreadLevel; i++){
+  for(int i = 0; i<j->n_of_thread; i++){
     if(pthread_join((j->threads)[i], NULL)!=0){
       fprintf (stdout, "system error: error\n");
       exit (1);
