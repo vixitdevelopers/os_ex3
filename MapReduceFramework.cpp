@@ -31,10 +31,26 @@ void emit3 (K3* key, V3* value, void* context){
   }
 }
 
+size_t find_thread_index(JobHandler * job){
 
+  for (size_t i = 0; i < (size_t) job->multiThreadLevel; i++)
+  {
+    if (pthread_equal (pthread_self (), (job->threads)[i]))
+    {
+      return i;
+    }
+  }
+  return -1;
+}
 
 void map_stage(JobHandler *job)
 {
+  size_t thread_index = find_thread_index(job);
+  if (thread_index == -1)
+  {
+    fprintf (stdout, "system error: error\n");
+    exit (1);
+  }
   while (true)
   {
 
@@ -45,39 +61,34 @@ void map_stage(JobHandler *job)
       break;
     }
     job->client.map (((job->inputVec).at (i)).first, ((job->inputVec).at (i)).second, (
-        (job->emit2_pre) + i));
-    //sort
-    std::sort (((job->emit2_pre) + i)->begin (), ((job->emit2_pre)
-                                                  + i)->end (),
-               mysort);
+        (job->emit2_pre) + thread_index));
+
     (*(job->atomic_state))++;
   }
+  //sort
+  std::sort (((job->emit2_pre) + thread_index)->begin (), ((job->emit2_pre)
+                                                           + thread_index)->end (),
+             mysort);
 }
 
 void shuffle_stage(JobHandler *job)
 {
-    auto c1 = (uint64_t) (job->inputVec.size ());
-    uint64_t c2 = 2;
-    c1 = c1 << 31;
-    c2 = c2 << 62;
-    uint64_t c = c1 | c2;
-    (*(job->atomic_state)) = c;
-    for (uint64_t i = 0; i < (job->inputVec).size (); i++)
+    size_t num_of_pairs = 0;
+    for (uint64_t i = 0; i < job->num_of_threads; i++){
+        num_of_pairs += (((job->emit2_pre)[i]).size ());
+    }
+    job->updateState(MAP_STAGE, SHUFFLE_STAGE,
+                   num_of_pairs);
+    for (uint64_t i = 0; i < job->num_of_threads; i++)
     {
       {
         for (uint64_t j = 0; j < (((job->emit2_pre)[i]).size ()); j++)
         {
           (job->emit2_post).emplace ((((job->emit2_pre)[i])[j]));
+          (*(job->atomic_state))++;
         }
-        (*(job->atomic_state))++;
       }
     }
-    c1 = (uint64_t) (job->emit2_post.size ());
-    c2 = 3;
-    c1 = c1 << 31;
-    c2 = c2 << 62;
-    c = c1 | c2;
-    (*(job->atomic_state)) = c;
 }
 
 void lock_mutex(pthread_mutex_t *mutex) {
@@ -146,8 +157,7 @@ void* foo(void* arg)
   map_stage(job);
   //shuffle
   if(pthread_equal ( pthread_self(), (job->threads)[0])){
-    job->updateState(MAP_STAGE, SHUFFLE_STAGE,
-                     job->inputVec.size());
+
     shuffle_stage (job);
   }
   job->barrier2->barrier();
@@ -212,6 +222,7 @@ void getJobState(JobHandle job, JobState* state){
   state->percentage = ((float)c)/((float)d)*100;
   state->stage = (stage_t)s;
 }
+
 void closeJobHandle(JobHandle job){
   waitForJob(job);
   JobHandler *j = (JobHandler*)job;

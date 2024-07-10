@@ -56,8 +56,12 @@ class JobHandler
   pthread_t *threads;
   std::atomic<uint64_t> *atomic_counter;
   std::atomic<uint64_t> *atomic_state;
+  std::atomic<uint64_t> *atomic_num_of_inter;
+
   IntermediateVec *emit2_pre;
   shuffle_type emit2_post;
+
+  int num_of_threads;
   bool done;
   JobHandler (const MapReduceClient &client,
               const InputVec &inputVec, OutputVec &outputVec,
@@ -67,8 +71,10 @@ class JobHandler
         wait_mutex (PTHREAD_MUTEX_INITIALIZER), state_mutex (PTHREAD_MUTEX_INITIALIZER)
   {
     threads = new pthread_t[multiThreadLevel];
-    emit2_pre = new IntermediateVec[inputVec.size ()];
+    emit2_pre = new IntermediateVec[multiThreadLevel];
     atomic_counter = new std::atomic<uint64_t> (0);
+    num_of_threads = multiThreadLevel;
+    atomic_num_of_inter = new std::atomic<uint64_t> (0);
     uint64_t init_value = (uint64_t) inputVec.size() <<
                                                      TOTAL_KEYS_BITS_SHIFT |
                           (uint64_t) UNDEFINED_STAGE << STAGE_BITS_SHIFT;
@@ -83,7 +89,7 @@ class JobHandler
     return static_cast<stage_t>(atomic_state->load () >> STAGE_BITS_SHIFT);
   }
 
-  void updateState(stage_t prev_stage, stage_t new_stage, int total) {
+  void updateState(stage_t prev_stage, stage_t new_stage, size_t total) {
     if (pthread_mutex_lock(&state_mutex) != 0) {
       printf("failed to lock a update_stage_mutex");
     }
