@@ -8,8 +8,19 @@
 #include <deque>
 #include "MapReduceClient.h"
 #include "Barrier.h"
-#define STAGE_BITS_SHIFT 62
-#define TOTAL_KEYS_BITS_SHIFT 31
+#define SHIFT_STAGE 62
+#define SHIFT_TOTAL 31
+#define ERROR_LOCK_MUTEX "failed to lock mutex"
+#define ERROR_UNLOCK_MUTEX "failed to unlock mutex"
+#define ERROR_DESTROY_MUTEX "failed to destroy mutex"
+#define SUCCESS 0
+
+void fail (const char *msg)
+{
+  std::cout << msg << std::endl;
+  exit (1);
+}
+
 class mycomparison
 {
   bool reverse;
@@ -24,14 +35,8 @@ class mycomparison
   }
 };
 
-struct mysort
-{
-    bool
-    operator() (const IntermediatePair &lhs, const IntermediatePair &rhs) const
-    {
-      return (*(lhs.first) < *(rhs.first));
-    }
-} mysort;
+
+
 typedef std::deque<std::pair<K2 *, V2 *>> shuffle_pair;
 
 typedef std::priority_queue<IntermediatePair, shuffle_pair, mycomparison>
@@ -41,24 +46,23 @@ class JobHandler
 {
  public:
 
-  Barrier *barrier;
-  Barrier *barrier2;
+  int n_of_thread;
   const MapReduceClient &client;
   const InputVec &input_vec;
+  bool finished;
   OutputVec &output_vec;
   pthread_t *threads;
   std::atomic<uint64_t> *atomic_counter;
   std::atomic<uint64_t> *atomic_state;
-  int n_of_thread;
-  IntermediateVec *emit2_pre;
-  shuffle_type emit2_post;
+  IntermediateVec *intermediate_vec;
+  shuffle_type intermediate_vec_shuffled;
   pthread_mutex_t mutex_wait;
   pthread_mutex_t mutex_state;
   pthread_mutex_t mutex_reduce;
   pthread_mutex_t mutex_emit;
+  Barrier *map_barrier;
+  Barrier *barrier;
 
-  int num_of_threads;
-  bool done;
   JobHandler (const MapReduceClient &client,
               const InputVec &inputVec, OutputVec &outputVec,
               int multiThreadLevel)
@@ -66,59 +70,60 @@ class JobHandler
       (outputVec), n_of_thread (multiThreadLevel), mutex_wait (PTHREAD_MUTEX_INITIALIZER), mutex_state (PTHREAD_MUTEX_INITIALIZER),
         mutex_reduce (PTHREAD_MUTEX_INITIALIZER), mutex_emit (PTHREAD_MUTEX_INITIALIZER)
   {
-    threads = new pthread_t[multiThreadLevel];
-    emit2_pre = new IntermediateVec[multiThreadLevel];
-    atomic_counter = new std::atomic<uint64_t> (0);
-    num_of_threads = multiThreadLevel;
     uint64_t init_value = (uint64_t) inputVec.size () <<
-                                                      TOTAL_KEYS_BITS_SHIFT |
-                          (uint64_t) UNDEFINED_STAGE << STAGE_BITS_SHIFT;
+                                                      SHIFT_TOTAL |
+                          (uint64_t) UNDEFINED_STAGE << SHIFT_STAGE;
     atomic_state = new std::atomic<uint64_t> (init_value);
+    intermediate_vec = new IntermediateVec[multiThreadLevel];
+    threads = new pthread_t[multiThreadLevel];
+    finished = false;
+    map_barrier = new Barrier (multiThreadLevel);
     barrier = new Barrier (multiThreadLevel);
-    barrier2 = new Barrier (multiThreadLevel);
-    done = false;
+    atomic_counter = new std::atomic<uint64_t> (0);
+
   }
 
   stage_t getJobStateFromAtomic () const
   {
-    return static_cast<stage_t>(atomic_state->load () >> STAGE_BITS_SHIFT);
+    return static_cast<stage_t>(atomic_state->load () >> SHIFT_STAGE);
   }
 
-  void updateState (stage_t prev_stage, stage_t new_stage, size_t total)
+  void updateState (stage_t stage_old, stage_t new_stage, size_t total_size)
   {
-    if (pthread_mutex_lock (&mutex_state) != 0)
+    if (pthread_mutex_lock (&mutex_state) != SUCCESS)
     {
-      printf ("failed to lock a update_stage_mutex");
+      fail (ERROR_LOCK_MUTEX);
     }
 
-    if (getJobStateFromAtomic () == prev_stage)
+    if (getJobStateFromAtomic () == stage_old)
     {
-      uint64_t map_init_state = (uint64_t) total << TOTAL_KEYS_BITS_SHIFT
-                                | (uint64_t) new_stage << STAGE_BITS_SHIFT;
+      uint64_t map_init_state = (uint64_t) total_size << SHIFT_TOTAL
+                                | (uint64_t) new_stage << SHIFT_STAGE;
       *atomic_state = map_init_state;
     }
 
-    if (pthread_mutex_unlock (&mutex_state) != 0)
+    if (pthread_mutex_unlock (&mutex_state) != SUCCESS)
     {
-      printf ("failed to unlock a update_stage_mutex");
+      fail (ERROR_UNLOCK_MUTEX);
     }
   }
 
   ~JobHandler ()
   {
-    delete[] threads;
-    delete[] emit2_pre;
     delete atomic_state;
-    delete barrier;
-    delete barrier2;
+    delete[] intermediate_vec;
     delete atomic_counter;
-    if (pthread_mutex_destroy (&mutex_reduce) != 0
+    delete[] threads;
+    delete map_barrier;
+    delete barrier;
+
+    if (pthread_mutex_destroy (&mutex_state) != SUCCESS ||
+        pthread_mutex_destroy (&mutex_reduce) != SUCCESS ||
+        pthread_mutex_destroy (&mutex_wait) != SUCCESS
         || pthread_mutex_destroy (&mutex_emit)
-           != 0 || pthread_mutex_destroy (&mutex_wait) != 0
-        || pthread_mutex_destroy (&mutex_state) != 0)
+           != SUCCESS)
     {
-      fprintf (stdout, "system error: error\n");
-      exit (1);
+      fail (ERROR_DESTROY_MUTEX);
     }
   }
 };
