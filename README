@@ -1,0 +1,11 @@
+danif64, itai_32
+Daniel Freudenberger (208738922), Itai Half (319023073)
+EX: 3
+
+FILES:
+MapReduceFramework.cpp - The source file for the framework.
+JobHandler.h - The header file for the job handler class.
+Barrier.cpp -(provided with the exercise) the source file for barrier.
+Barrier.h - (provided with the exercise) the header file for barrier.
+Makefile - the make file for the exercise.
+README - this file.

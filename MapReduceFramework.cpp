@@ -8,14 +8,12 @@
 #include <semaphore.h>
 #include "JobHandler.h"
 
-struct sort_intermidate_vector
-{
-    bool
-    operator() (const IntermediatePair &lhs, const IntermediatePair &rhs) const
-    {
-      return (*(lhs.first) < *(rhs.first));
-    }
-} sort_intermidate_vector;
+#define ERROR_THREAD_CREATE "error creating thread"
+#define ERROR_THREAD_JOIN "error joining thread"
+#define SHIFT_BITS_STAGE 62
+#define SHIFT_BITS_TWO 2
+#define SHIFT_BITS_TOTAL 33
+#define PERCENTAGE 100
 
 void emit2 (K2 *key, V2 *value, void *context)
 {
@@ -28,18 +26,10 @@ void emit3 (K3 *key, V3 *value, void *context)
 {
   auto *job = (JobHandler *) context;
 
-  if (pthread_mutex_lock (&(job->mutex_emit)) != 0)
-  {
-    fprintf (stdout, "system error: error\n");
-    exit (1);
-  }
+  mutex_lock (&(job->mutex_emit));
   OutputPair out = OutputPair ({key, value});
   (job->output_vec).push_back (out);
-  if (pthread_mutex_unlock (&(job->mutex_emit)) != 0)
-  {
-    fprintf (stdout, "system error: error\n");
-    exit (1);
-  }
+  mutex_unlock (&(job->mutex_emit));
 }
 
 size_t find_thread_index (JobHandler *job)
@@ -58,11 +48,6 @@ size_t find_thread_index (JobHandler *job)
 void map_stage (JobHandler *job)
 {
   size_t thread_index = find_thread_index (job);
-  if (thread_index == -1)
-  {
-    fprintf (stdout, "system error: error\n");
-    exit (1);
-  }
   while (true)
   {
     uint64_t i = (*(job->atomic_counter))++;
@@ -71,12 +56,12 @@ void map_stage (JobHandler *job)
       job->map_barrier->barrier ();
       break;
     }
-    job->client.map (((job->input_vec).at (i)).first, ((job->input_vec).at (i)).second, (
-        (job->intermediate_vec) + thread_index));
+    job->client.map (((job->input_vec).at (i)).first,
+                     ((job->input_vec).at (i)).second, (
+                         (job->intermediate_vec) + thread_index));
 
     (*(job->atomic_state))++;
   }
-  //sort
   std::sort (((job->intermediate_vec) + thread_index)->begin (), (
                  (job->intermediate_vec)
                  + thread_index)->end (),
@@ -100,28 +85,11 @@ void shuffle_stage (JobHandler *job)
     {
       for (uint64_t j = 0; j < (((job->intermediate_vec)[i]).size ()); j++)
       {
-        (job->intermediate_vec_shuffled).emplace ((((job->intermediate_vec)[i])[j]));
+        (job->intermediate_vec_shuffled).emplace
+            ((((job->intermediate_vec)[i])[j]));
         (*(job->atomic_state))++;
       }
     }
-  }
-}
-
-void lock_mutex (pthread_mutex_t *mutex)
-{
-  if (pthread_mutex_lock (mutex) != 0)
-  {
-    fprintf (stdout, "system error: error\n");
-    exit (1);
-  }
-}
-
-void unlock_mutex (pthread_mutex_t *mutex)
-{
-  if (pthread_mutex_unlock (mutex) != 0)
-  {
-    fprintf (stdout, "system error: error\n");
-    exit (1);
   }
 }
 
@@ -154,17 +122,17 @@ void reduce_stage (JobHandler *job)
 {
   while (true)
   {
-    lock_mutex (&(job->mutex_reduce));
+    mutex_lock (&(job->mutex_reduce));
 
     if (is_queue_empty (job))
     {
-      unlock_mutex (&(job->mutex_reduce));
+      mutex_unlock (&(job->mutex_reduce));
       break;
     }
     uint64_t count = 0;
     IntermediateVec new_vec = process_batch (job, &count);
 
-    unlock_mutex (&(job->mutex_reduce));
+    mutex_unlock (&(job->mutex_reduce));
 
     (job->client).reduce (&new_vec, job);
     (*(job->atomic_state)) += count;
@@ -174,7 +142,8 @@ void reduce_stage (JobHandler *job)
 void *thread_entry_point (void *jobHand)
 {
   auto *job = (JobHandler *) jobHand;
-  job->updateState (UNDEFINED_STAGE, MAP_STAGE, (int) job->input_vec.size ());
+  job->updateState (UNDEFINED_STAGE, MAP_STAGE,
+                    (int) job->input_vec.size ());
 
   map_stage (job);
   job->barrier->barrier ();
@@ -186,7 +155,6 @@ void *thread_entry_point (void *jobHand)
   job->barrier->barrier ();
   job->updateState (SHUFFLE_STAGE, REDUCE_STAGE,
                     job->intermediate_vec_shuffled.size ());
-  //reduce
   reduce_stage (job);
   return nullptr;
 }
@@ -195,66 +163,58 @@ JobHandle startMapReduceJob (const MapReduceClient &client,
                              const InputVec &inputVec, OutputVec &outputVec,
                              int multiThreadLevel)
 {
-  JobHandler *job = new JobHandler (client, inputVec, outputVec, multiThreadLevel);
+  auto *job = new JobHandler (client, inputVec, outputVec, multiThreadLevel);
   for (int i = 0; i < multiThreadLevel; ++i)
   {
-    if (pthread_create ((job->threads) + i, NULL, thread_entry_point, job)
+    if (pthread_create ((job->threads) + i,
+                        nullptr, thread_entry_point, job)
         != 0)
-    {
-      fprintf (stdout, "system error: error\n");
-      exit (1);
-    }
+      fail (ERROR_THREAD_CREATE);
   }
   return job;
 }
 
 void waitForJob (JobHandle job)
 {
-  JobHandler *j = (JobHandler *) job;
-  if (j->finished)
+  auto *my_job = (JobHandler *) job;
+  if (my_job->finished)
   {
     return;
   }
-  if (pthread_mutex_lock (&(j->mutex_wait)) != 0)
+  mutex_lock (&(my_job->mutex_wait));
+  my_job->finished = true;
+  for (int i = 0; i < my_job->n_of_thread; i++)
   {
-    fprintf (stdout, "system error: error\n");
-    exit (1);
+    if (pthread_join ((my_job->threads)[i],
+                      nullptr) != SUCCESS)
+      fail (ERROR_THREAD_JOIN);
   }
-  j->finished = true;
-  for (int i = 0; i < j->n_of_thread; i++)
-  {
-    if (pthread_join ((j->threads)[i], NULL) != 0)
-    {
-      fprintf (stdout, "system error: error\n");
-      exit (1);
-    }
-  }
-  if (pthread_mutex_unlock (&(j->mutex_wait)) != 0)
-  {
-    fprintf (stdout, "system error: error\n");
-    exit (1);
-  }
+  mutex_unlock (&(my_job->mutex_wait));
 
-}
-void getJobState (JobHandle job, JobState *state)
-{
-  JobHandler *j = (JobHandler *) job;
-  uint64_t atomic_full = *(j->atomic_state);
-  uint64_t atomic_s = atomic_full;
-  uint64_t atomic_d = atomic_full;
-  uint64_t atomic_c = atomic_full;
-  atomic_s = atomic_s >> 62;
-  atomic_d = atomic_d << 2;
-  atomic_d = atomic_d >> 33;
-  atomic_c = atomic_c << 33;
-  atomic_c = atomic_c >> 33;
-  state->percentage = ((float) atomic_c) / ((float) atomic_d) * 100;
-  state->stage = (stage_t) atomic_s;
 }
 
 void closeJobHandle (JobHandle job)
 {
   waitForJob (job);
-  JobHandler *j = (JobHandler *) job;
-  delete j;
+  auto *my_job = (JobHandler *) job;
+  delete my_job;
+}
+
+void getJobState (JobHandle job, JobState *state)
+{
+  auto *j = (JobHandler *) job;
+  uint64_t state_atomic = *(j->atomic_state);
+
+  uint64_t stage_ = state_atomic;
+  uint64_t total = state_atomic;
+  uint64_t num_done = state_atomic;
+
+  stage_ >>= SHIFT_BITS_STAGE;
+  total <<= SHIFT_BITS_TWO;
+  total >>= SHIFT_BITS_TOTAL;
+  num_done <<= SHIFT_BITS_TOTAL;
+  num_done >>= SHIFT_BITS_TOTAL;
+
+  state->percentage = ((float) num_done) / ((float) total) * PERCENTAGE;
+  state->stage = (stage_t) stage_;
 }

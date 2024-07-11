@@ -8,6 +8,7 @@
 #include <deque>
 #include "MapReduceClient.h"
 #include "Barrier.h"
+#define ERROR_MSG "system error: "
 #define SHIFT_STAGE 62
 #define SHIFT_TOTAL 31
 #define ERROR_LOCK_MUTEX "failed to lock mutex"
@@ -17,30 +18,42 @@
 
 void fail (const char *msg)
 {
-  std::cout << msg << std::endl;
+  std::cout << ERROR_MSG << msg << std::endl;
   exit (1);
 }
 
-class mycomparison
+void mutex_lock (pthread_mutex_t *mutex)
 {
-  bool reverse;
+  if (pthread_mutex_lock (mutex) != SUCCESS)
+  {
+    fail (ERROR_LOCK_MUTEX);
+  }
+}
+void mutex_unlock (pthread_mutex_t *mutex)
+{
+  if (pthread_mutex_unlock (mutex) != SUCCESS)
+  {
+    fail (ERROR_UNLOCK_MUTEX);
+  }
+}
+class compare_by_pair
+{
+  bool reversed;
  public:
-  mycomparison (const bool &revparam = false)
-  { reverse = revparam; }
+  explicit compare_by_pair (const bool &b = false)
+  { reversed = b; }
   bool
   operator() (const IntermediatePair &lhs, const IntermediatePair &rhs) const
   {
-    if (reverse) return (*(rhs.first) < *(lhs.first));
+    if (reversed) return (*(rhs.first) < *(lhs.first));
     else return (*(lhs.first) < *(rhs.first));
   }
 };
 
-
-
 typedef std::deque<std::pair<K2 *, V2 *>> shuffle_pair;
 
-typedef std::priority_queue<IntermediatePair, shuffle_pair, mycomparison>
-    shuffle_type;
+typedef std::priority_queue<IntermediatePair, shuffle_pair, compare_by_pair>
+    interm_shuffeled;
 
 class JobHandler
 {
@@ -55,7 +68,7 @@ class JobHandler
   std::atomic<uint64_t> *atomic_counter;
   std::atomic<uint64_t> *atomic_state;
   IntermediateVec *intermediate_vec;
-  shuffle_type intermediate_vec_shuffled;
+  interm_shuffeled intermediate_vec_shuffled;
   pthread_mutex_t mutex_wait;
   pthread_mutex_t mutex_state;
   pthread_mutex_t mutex_reduce;
@@ -67,8 +80,11 @@ class JobHandler
               const InputVec &inputVec, OutputVec &outputVec,
               int multiThreadLevel)
       : client (client), input_vec (inputVec), output_vec
-      (outputVec), n_of_thread (multiThreadLevel), mutex_wait (PTHREAD_MUTEX_INITIALIZER), mutex_state (PTHREAD_MUTEX_INITIALIZER),
-        mutex_reduce (PTHREAD_MUTEX_INITIALIZER), mutex_emit (PTHREAD_MUTEX_INITIALIZER)
+      (outputVec), n_of_thread (multiThreadLevel),
+        mutex_wait (PTHREAD_MUTEX_INITIALIZER),
+        mutex_state (PTHREAD_MUTEX_INITIALIZER),
+        mutex_reduce (PTHREAD_MUTEX_INITIALIZER),
+        mutex_emit (PTHREAD_MUTEX_INITIALIZER)
   {
     uint64_t init_value = (uint64_t) inputVec.size () <<
                                                       SHIFT_TOTAL |
@@ -90,10 +106,7 @@ class JobHandler
 
   void updateState (stage_t stage_old, stage_t new_stage, size_t total_size)
   {
-    if (pthread_mutex_lock (&mutex_state) != SUCCESS)
-    {
-      fail (ERROR_LOCK_MUTEX);
-    }
+    mutex_lock (&mutex_state);
 
     if (getJobStateFromAtomic () == stage_old)
     {
@@ -102,10 +115,7 @@ class JobHandler
       *atomic_state = map_init_state;
     }
 
-    if (pthread_mutex_unlock (&mutex_state) != SUCCESS)
-    {
-      fail (ERROR_UNLOCK_MUTEX);
-    }
+    mutex_unlock (&mutex_state);
   }
 
   ~JobHandler ()
